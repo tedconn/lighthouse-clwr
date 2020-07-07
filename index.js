@@ -14,43 +14,53 @@ const lhFlags = {
     output: 'json',
     emulatedFormFactor: 'none',
     disableStorageReset: true,
+    throttlingMethod: 'provided',
 };
 
 const lhConfig = { extends: 'lighthouse:default', settings: { onlyCategories: ['performance'] } };
 
-function file(isLockerEnabled, isThrottlingEnabled, iteration, name) {
-    return `${resultsDir}/${isLockerEnabled ? 'locker' : 'nolocker'}_${
-        isThrottlingEnabled ? 'throttling' : 'nothrottling'
-    }_${iteration}_${name}`;
+function file(isLockerEnabled, iteration, name) {
+    return `${resultsDir}/${isLockerEnabled ? 'locker' : 'nolocker'}_${iteration}_${name}`;
 }
 
-async function run(port, isThrottlingEnabled, isLockerEnabled, records) {
+function sumMeasure(lhReport, measure) {
+    return lhReport.audits['user-timings'].details.items
+        .filter((item) => item.name === measure)
+        .filter((item) => item.timingType === 'Measure')
+        .reduce((acc, value) => acc + value.duration, 0);
+}
+
+async function run(port, isLockerEnabled, records) {
     for (let i = 0; i <= iterationCount; i++) {
         const runnerResult = await lighthouse(
             `${url}?lwr.mode=dev&lwr.locale=en-US&lwr.locker=${isLockerEnabled}`,
-            { ...lhFlags, throttlingMethod: isThrottlingEnabled ? 'simulate' : 'provided', port },
+            { ...lhFlags, port },
             lhConfig
         );
 
+        const profileStr = JSON.stringify(runnerResult.artifacts.traces.defaultPass.traceEvents);
+        fs.writeFileSync(file(isLockerEnabled, i, `profile.json`), profileStr);
+
+        fs.writeFileSync(file(isLockerEnabled, i, `lhreport.json`), runnerResult.report);
+
+        const lhReport = JSON.parse(runnerResult.report);
+
+        const result = {
+            isLockerEnabled,
+            iteration: i,
+            ...metrics.reduce((acc, metric) => {
+                return {
+                    ...acc,
+                    [metric]: runnerResult.lhr.audits[metric].numericValue,
+                };
+            }, {}),
+            'lwc-rehydrate': sumMeasure(lhReport, 'lwc-rehydrate'),
+            evaluateInSandbox: sumMeasure(lhReport, 'locker'),
+        };
+
+        console.log(result);
+
         if (i > 0) {
-            const profileStr = JSON.stringify(runnerResult.artifacts.traces.defaultPass.traceEvents);
-            fs.writeFileSync(file(isLockerEnabled, isThrottlingEnabled, i, `profile.json`), profileStr);
-
-            fs.writeFileSync(file(isLockerEnabled, isThrottlingEnabled, i, `lhreport.json`), runnerResult.report);
-
-            const result = {
-                iteration: i,
-                isLockerEnabled,
-                isThrottlingEnabled,
-                ...metrics.reduce((acc, metric) => {
-                    return {
-                        ...acc,
-                        [metric]: runnerResult.lhr.audits[metric].numericValue,
-                    };
-                }, {}),
-            };
-
-            console.log(result);
             records.push(result);
         }
     }
@@ -64,20 +74,19 @@ async function run(port, isThrottlingEnabled, isLockerEnabled, records) {
     const csvWriter = createCsvWriter({
         path: `${resultsDir}/results.csv`,
         header: [
-            { id: 'iteration', title: 'Iteration' },
-            { id: 'isThrottlingEnabled', title: 'Is Throttling Enabled' },
             { id: 'isLockerEnabled', title: 'Is Locker Enabled' },
+            { id: 'iteration', title: 'Iteration' },
             ...metrics.map((m) => ({ id: m, title: m })),
+            { id: 'lwc-rehydrate', title: 'lwc-rehydrate' },
+            { id: 'evaluateInSandbox', title: 'evaluateInSandbox' },
         ],
     });
 
     const chrome = await chromeLauncher.launch({ chromeFlags });
 
     try {
-        await run(chrome.port, false, false, records);
-        await run(chrome.port, false, true, records);
-        await run(chrome.port, true, false, records);
-        await run(chrome.port, true, true, records);
+        await run(chrome.port, false, records);
+        await run(chrome.port, true, records);
     } finally {
         await chrome.kill();
     }
