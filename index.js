@@ -9,6 +9,7 @@ const metrics = ['largest-contentful-paint', 'interactive', 'first-meaningful-pa
 const iterationCount = 20;
 const url = 'http://localhost:3000/record/Product__c/home';
 const chromeFlags = ['--headless'];
+const mode = 'prod';
 
 const lhFlags = {
     output: 'json',
@@ -20,7 +21,7 @@ const lhFlags = {
 const lhConfig = { extends: 'lighthouse:default', settings: { onlyCategories: ['performance'] } };
 
 function file(isLockerEnabled, iteration, name) {
-    return `${resultsDir}/${isLockerEnabled ? 'locker' : 'nolocker'}_${iteration}_${name}`;
+    return `${resultsDir}/${isLockerEnabled ? 'locker' : 'nolocker'}_${mode}_${iteration}_${name}`;
 }
 
 function sumMeasure(lhReport, measure) {
@@ -33,7 +34,7 @@ function sumMeasure(lhReport, measure) {
 async function run(port, isLockerEnabled, records) {
     for (let i = 0; i <= iterationCount; i++) {
         const runnerResult = await lighthouse(
-            `${url}?lwr.mode=dev&lwr.locale=en-US&lwr.locker=${isLockerEnabled}`,
+            `${url}?lwr.mode=${mode}&lwr.locale=en-US&lwr.locker=${isLockerEnabled}`,
             { ...lhFlags, port },
             lhConfig
         );
